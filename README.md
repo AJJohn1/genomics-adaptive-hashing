@@ -83,6 +83,4 @@ mut_2   SOMATIC         SRR1523499.1907         A       C       FORWARD
 ---
 
 ## 📄 Academic Attribution & Citation
-If you implement this streaming pipeline or low-resource optimization strategy within an academic paper, peer-reviewed journal submission, or bioinformatics benchmark review, please use the following citation signature:
-
-> A. John. "An Ultra-Low Memory, Single-Pass Streaming Engine for Alignment-Free Somatic Mutation Identification in High-Throughput Sequencing Data." Preprint index portal registry source matrix reference repository tracking link: https://github.com/AJJohn1/genomics-adaptive-hashing/blob/main/integrated_engine.c
+ A. John. "An Ultra-Low Memory, Single-Pass Streaming Engine for Alignment-Free Somatic Mutation Identification in High-Throughput Sequencing Data." Preprint index portal registry source matrix reference repository tracking link: https://github.com/AJJohn1/genomics-adaptive-hashing/blob/main/integrated_engine.c
