@@ -1,9 +1,9 @@
 cat << 'EOF' > integrated_engine.c
 /**
  * @file integrated_engine.c
- * @brief Generic Low-RAM Somatic Mutation Engine with Self-Healing Permissions.
+ * @brief High-Throughput Low-RAM Alignment-Free Somatic Mutation Streaming Engine.
  * @author Aswin John
- * @see https://github.com
+ * @see https://github.com/AJJohn1/genomics-adaptive-hashing/blob/main/README.md
  */
 
 #include <stdio.h>
@@ -16,6 +16,7 @@ cat << 'EOF' > integrated_engine.c
 
 #define BUFFER_CEILING 65536 
 #define KMER_SIZE 28
+#define QUALITY_THRESHOLD 30 // Q30 Filter: 99.9% base-call accuracy gate
 
 uint64_t true_isolated_somatic_mutations = 0;
 
@@ -56,7 +57,6 @@ int main(int argc, char *argv[]) {
         trim_input_string(tumor_path);
         printf("====================================================================================\n\n");
     } else {
-        /* FIXED: Mapped explicit array index elements argv[1] and argv[2] to match const char* target types */
         strncpy(normal_path, argv[1], sizeof(normal_path) - 1);
         normal_path[sizeof(normal_path) - 1] = '\0';
         strncpy(tumor_path, argv[2], sizeof(tumor_path) - 1);
@@ -65,7 +65,6 @@ int main(int argc, char *argv[]) {
 
     /* STAGE 2: INTEGRATED SELF-HEALING PERMISSION CORRECTION (CHMOD 644) */
     printf("Applying automated cryptographic permission overrides (chmod 644)... ");
-    // S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH maps exactly to standard octa-decimal 0644 (rw-r--r--)
     chmod(normal_path, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
     chmod(tumor_path, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
     printf("[DONE]\n\n");
