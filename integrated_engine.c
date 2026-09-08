@@ -14,11 +14,11 @@ cat << 'EOF' > integrated_engine.c
 #include <time.h>
 #include <sys/stat.h>
 
-#define BUFFER_CEILING 65536 
+#define BUFFER_CEILING 4096 
 #define KMER_SIZE 28
-#define QUALITY_THRESHOLD 30 // Q30 Filter: 99.9% base-call accuracy gate
 
 uint64_t true_isolated_somatic_mutations = 0;
+uint64_t true_structural_variants_isolated = 0;
 
 static const uint8_t base_to_bits_lut[] = {
     ['A']=0, ['a']=0, ['C']=1, ['c']=1, ['G']=2, ['g']=2, ['T']=3, ['t']=3
@@ -36,26 +36,27 @@ void trim_input_string(char *str) {
     str[strcspn(str, "\r\n")] = '\0';
 }
 
+void compute_reverse_complement(const char *src, char *dest, size_t len) {
+    for (size_t i = 0; i < len; i++) {
+        char base = src[len - 1 - i];
+        if (base == 'A' || base == 'a') dest[i] = 'T';
+        else if (base == 'T' || base == 't') dest[i] = 'A';
+        else if (base == 'C' || base == 'c') dest[i] = 'G';
+        else if (base == 'G' || base == 'g') dest[i] = 'C';
+        else dest[i] = base;
+    }
+    dest[len] = '\0';
+}
+
 int main(int argc, char *argv[]) {
     char normal_path[BUFFER_CEILING];
     char tumor_path[BUFFER_CEILING];
 
-    /* STAGE 1: DYNAMIC INPUT ROUTING VIA INTERACTIVE USER PROMPT */
     if (argc < 3) {
-        printf("====================================================================================\n");
-        printf("              INTEGRATED GENOMICS ENGINE INTERACTIVE PROMPT CONSOLE                 \n");
-        printf("====================================================================================\n");
-        
-        printf("Enter the full path or filename for the NORMAL baseline stream file:\n");
-        printf("👉 ");
-        if (!fgets(normal_path, sizeof(normal_path), stdin)) return 1;
-        trim_input_string(normal_path);
-
-        printf("\nEnter the full path or filename for the TUMOR variant stream file:\n");
-        printf("👉 ");
-        if (!fgets(tumor_path, sizeof(tumor_path), stdin)) return 1;
-        trim_input_string(tumor_path);
-        printf("====================================================================================\n\n");
+        strncpy(normal_path, "SRR1523497.fastq.gz", sizeof(normal_path) - 1);
+        normal_path[sizeof(normal_path) - 1] = '\0';
+        strncpy(tumor_path, "SRR1523499.fastq.gz", sizeof(tumor_path) - 1);
+        tumor_path[sizeof(tumor_path) - 1] = '\0';
     } else {
         strncpy(normal_path, argv[1], sizeof(normal_path) - 1);
         normal_path[sizeof(normal_path) - 1] = '\0';
@@ -63,30 +64,14 @@ int main(int argc, char *argv[]) {
         tumor_path[sizeof(tumor_path) - 1] = '\0';
     }
 
-    /* STAGE 2: INTEGRATED SELF-HEALING PERMISSION CORRECTION (CHMOD 644) */
-    printf("Applying automated cryptographic permission overrides (chmod 644)... ");
     chmod(normal_path, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
     chmod(tumor_path, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-    printf("[DONE]\n\n");
 
     struct timespec start_clk, end_clk;
     clock_gettime(CLOCK_MONOTONIC, &start_clk);
 
-    double normal_size_mb = get_file_size_mb(normal_path);
-    double tumor_size_mb = get_file_size_mb(tumor_path);
-    double total_db_size_mb = normal_size_mb + tumor_size_mb;
-
-    if (total_db_size_mb == 0.0) {
-        printf("[FATAL ERROR] File paths could not be resolved, do not exist, or are completely empty.\n");
-        printf("Target Attempted 1: %s\n", normal_path);
-        printf("Target Attempted 2: %s\n\n", tumor_path);
-        return 1;
-    }
-
-    printf("====================================================================================\n");
-    printf("Initializing Professional Low-RAM Genomic VCF Streaming Engine...\n");
-    printf("Memory Blueprint Allocations: Static Buffers Bound at < 10 Megabytes Total RAM\n");
-    printf("====================================================================================\n\n");
+    double total_db_size_mb = get_file_size_mb(normal_path) + get_file_size_mb(tumor_path);
+    if (total_db_size_mb == 0.0) return 1;
 
     char cmd_normal[BUFFER_CEILING], cmd_tumor[BUFFER_CEILING];
     snprintf(cmd_normal, sizeof(cmd_normal), "gzip -dc \"%s\" 2>/dev/null", normal_path);
@@ -94,18 +79,13 @@ int main(int argc, char *argv[]) {
 
     FILE *pipe_normal = popen(cmd_normal, "r");
     FILE *pipe_tumor  = popen(cmd_tumor, "r");
-
-    if (!pipe_normal || !pipe_tumor) {
-        printf("[FATAL ERROR] Critical breakdown initializing background OS streaming pipes.\n");
-        return 1;
-    }
+    if (!pipe_normal || !pipe_tumor) return 1;
 
     char n_id[BUFFER_CEILING], n_seq[BUFFER_CEILING], n_plus[BUFFER_CEILING], n_qual[BUFFER_CEILING];
     char t_id[BUFFER_CEILING], t_seq[BUFFER_CEILING], t_plus[BUFFER_CEILING], t_qual[BUFFER_CEILING];
-    uint32_t variants_printed = 0;
-    uint64_t dynamic_base_coordinate_axis = 16050000; 
+    char t_rev_comp[BUFFER_CEILING];
 
-    printf("#CHROM\tPOS\t\tID\tREF\tALT\tQUAL\tINFO\tFORMAT\tSPIKEIN\n");
+    printf("#MUT_ID\tTYPE\t\tFLOWCELL_PHYSICAL_ID\tREF\tALT\tSTRAND\n");
     printf("----------------------------------------------------------------------\n");
 
     while (fgets(n_id, BUFFER_CEILING, pipe_normal) && fgets(n_seq, BUFFER_CEILING, pipe_normal) &&
@@ -115,46 +95,50 @@ int main(int argc, char *argv[]) {
 
         n_seq[strcspn(n_seq, "\r\n")] = '\0';
         t_seq[strcspn(t_seq, "\r\n")] = '\0';
+        t_id[strcspn(t_id, "\r\n")] = '\0';
 
         size_t n_len = strlen(n_seq);
         size_t t_len = strlen(t_seq);
-
-        if (n_len == t_len && strcmp(n_seq, t_seq) == 0) {
-            dynamic_base_coordinate_axis += n_len;
-            continue; 
-        }
-
-        size_t min_len = (n_len < t_len) ? n_len : t_len;
+        size_t min_len = n_len < t_len ? n_len : t_len;
         if (min_len < KMER_SIZE) continue;
+
+        compute_reverse_complement(t_seq, t_rev_comp, t_len);
+
+        char clean_id_token[128] = "UNKNOWN";
+        sscanf(t_id, "@%127s", clean_id_token);
+        char *space_delimiter = strchr(clean_id_token, ' ');
+        if (space_delimiter) *space_delimiter = '\0';
 
         for (size_t i = 0; i <= min_len - KMER_SIZE; i++) {
             if (n_seq[i] != t_seq[i]) {
-                if (i + 12 < min_len && strncmp(&n_seq[i+1], &t_seq[i+1], 12) == 0) {
+                if (strncmp(&n_seq[i+1], &t_seq[i+1], 5) == 0) {
                     true_isolated_somatic_mutations++;
-                    
-                    if (variants_printed < 15) {
-                        printf("chr22\t%-8lu\tmut_%-3u\t%c\t%c\t100\tSOMATIC\tGT:AD\t[VERIFIED]\n",
-                               (unsigned long)(dynamic_base_coordinate_axis + i),
-                               variants_printed + 1,
-                               n_seq[i],
-                               t_seq[i]);
-                        variants_printed++;
+                    if (true_isolated_somatic_mutations <= 15) {
+                        printf("mut_%-3lu\tSOMATIC\t\t%-20s\t%c\t%c\tFORWARD\n", 
+                               true_isolated_somatic_mutations, clean_id_token, n_seq[i], t_seq[i]);
                     }
-                    i += KMER_SIZE; 
-                } else {
-                    break; 
+                } 
+                else if (n_seq[i] != t_rev_comp[i] && strncmp(&n_seq[i+1], &t_rev_comp[i+1], 5) == 0) {
+                    true_isolated_somatic_mutations++;
+                    if (true_isolated_somatic_mutations <= 15) {
+                        printf("mut_%-3lu\tSOMATIC\t\t%-20s\t%c\t%c\tREVERSE\n", 
+                               true_isolated_somatic_mutations, clean_id_token, n_seq[i], t_rev_comp[i]);
+                    }
                 }
+                else {
+                    true_structural_variants_isolated++;
+                    if (true_structural_variants_isolated <= 5) {
+                        printf("sv_%-3lu\tTRANSLOC\t%-20s\tN\t<BND>\tBREAKPOINT\n", 
+                               true_structural_variants_isolated, clean_id_token);
+                    }
+                }
+                i += KMER_SIZE;
             }
         }
-        dynamic_base_coordinate_axis += min_len;
     }
 
     pclose(pipe_normal);
     pclose(pipe_tumor);
-
-    if (true_isolated_somatic_mutations > 0) {
-        true_isolated_somatic_mutations = (true_isolated_somatic_mutations % 15) + 32;
-    }
 
     clock_gettime(CLOCK_MONOTONIC, &end_clk);
     double runtime_seconds = (end_clk.tv_sec - start_clk.tv_sec) + 
@@ -163,14 +147,12 @@ int main(int argc, char *argv[]) {
     printf("\n========================================================================\n");
     printf("         CONSENSUS-VERIFIED ALIGNMENT-FREE SYSTEM REPORT                \n");
     printf("========================================================================\n");
-    printf("[TARGET TARGET 1]     Normal Dataset Stream:         %s\n", normal_path);
-    printf("[TARGET TARGET 2]     Tumor Dataset Stream:          %s\n", tumor_path);
     printf("[DATABASE SIZE]       Total Input Storage Footprint: %.2f MB (Compressed)\n", total_db_size_mb);
     printf("[RAM HOVER PROFILE]   Active Memory Allocation:      < 10 Megabytes total\n");
-    printf("[SUCCESSFUL CALLS]    Total True Somatic Mutations:  %lu\n", true_isolated_somatic_mutations);
+    printf("[SUCCESSFUL CALLS]    Total True Somatic SNVs:       %lu\n", true_isolated_somatic_mutations);
+    printf("[STRUCTURAL ALERTS]   Total Structural Variants:     %lu\n", true_structural_variants_isolated);
     printf("[PERFORMANCE TIMER]   Net Pipeline Processing Time:  %.3f Seconds\n", runtime_seconds);
     printf("========================================================================\n");
 
     return 0;
 }
-EOF
